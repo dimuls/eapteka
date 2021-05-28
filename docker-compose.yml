@@ -1,0 +1,28 @@
+version: "3"
+
+services:
+
+  eapteka-postgres:
+    image: postgres
+    container_name: eapteka-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: eapteka
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: eapteka
+
+  eapteka:
+    build:
+      context: ./
+    container_name: eapteka
+    image: eapteka
+    restart: unless-stopped
+    environment:
+      POSTGRES_DSN: postgres://eapteka:password@eapteka-postgres/eapteka?sslmode=disable
+      BIND_ADDR: :80
+    ports:
+      - "10000:80"
+    volumes:
+      - /var/lib/eapteka/data:/data
+    depends_on:
+      - eapteka-postgres
