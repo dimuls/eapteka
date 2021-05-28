@@ -32,7 +32,7 @@ Go-пакет, которые содержит немного модифицир
 ### [migrations](https://github.com/dimuls/eapteka/tree/master/migrations)
 
 Go-пакет с миграциями базы данных, которые встраиваются в основный исполняемый 
-файл сервиса инициализации схемы БД.
+файл сервиса для инициализации схемы БД.
 
 ## [pics](https://github.com/dimuls/eapteka/tree/master/pics)
 
@@ -61,3 +61,5 @@ git submodule init
 ```bash
 docker-compose up -d --build 
 ```
+
+Проект будет доступен по адресу [http://127.0.0.1:10000](http://127.0.0.1:10000)
