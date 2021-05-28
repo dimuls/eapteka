@@ -2,3 +2,18 @@ Dockerfile
 data
 .dockerignore
 .idea
+
+ui/node_modules
+ui/dist
+
+# local env files
+ui/.env.local
+ui/.env.*.local
+
+# Log files
+ui/npm-debug.log*
+ui/yarn-debug.log*
+ui/yarn-error.log*
+ui/pnpm-debug.log*
+
+db-scheme.png

@@ -1,11 +1,11 @@
-#FROM node:lts-alpine AS frontend-builder
-#
-#COPY ./ui /app
-#
-#WORKDIR /app
-#
-#RUN npm ci
-#RUN npm run build
+FROM node:lts-alpine AS frontend-builder
+
+COPY ./ui /app
+
+WORKDIR /app
+
+RUN npm ci
+RUN NODE_ENV=production npm run build
 
 
 
@@ -14,11 +14,10 @@ FROM golang:alpine AS backend-builder
 WORKDIR /go/src/github.com/dimuls/eapteka
 
 COPY . .
-#COPY --from=frontend-builder /app/build ./ui/build
+COPY --from=frontend-builder /app/dist ./ui/dist
 
-#RUN git submodule update --recursive --remote
-
-RUN go install .
+RUN go install ./cmd/eapteka
+RUN go install ./cmd/eapteka-data-loader
 
 
 

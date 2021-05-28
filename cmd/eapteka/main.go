@@ -2,25 +2,28 @@ package main
 
 import (
 	"context"
-	"eapteka/migrations"
+	"eapteka/pics"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
-
-	"github.com/jmoiron/sqlx"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/sirupsen/logrus"
 
 	"eapteka/ent"
+	"eapteka/filesystem"
+	"eapteka/migrations"
+	"eapteka/ui"
 )
 
 func main() {
@@ -152,6 +155,25 @@ func main() {
 
 		return ctx.JSON(p)
 	})
+
+	ws.Get("/pics/*", filesystem.New(filesystem.Config{
+		Next: func(c *fiber.Ctx) bool {
+			path := string(c.Request().URI().Path())
+			return strings.HasPrefix(path, "/api/")
+		},
+		Root: http.FS(pics.FS),
+	}))
+
+	ws.Get("/*", filesystem.New(filesystem.Config{
+		Next: func(c *fiber.Ctx) bool {
+			path := string(c.Request().URI().Path())
+			return strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/pics/")
+		},
+		Root:         http.FS(ui.FS),
+		Index:        "index.html",
+		NotFoundFile: "index.html",
+		RootPath:     "dist",
+	}))
 
 	var wg sync.WaitGroup
 
