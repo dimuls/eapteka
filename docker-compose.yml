@@ -19,10 +19,13 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DSN: postgres://eapteka:password@eapteka-postgres/eapteka?sslmode=disable
+      TLS_CERT: /etc/letsencrypt/live/eapteka.tutulala.ru/fullchain.pem
+      TLS_KEY: /etc/letsencrypt/live/eapteka.tutulala.ru/privkey.pem
       BIND_ADDR: :80
     ports:
       - "10000:80"
     volumes:
-      - /var/lib/eapteka/data:/data
+      - "/etc/letsencrypt/archive/eapteka.tutulala.ru:/etc/letsencrypt/archive/eapteka.tutulala.ru:ro"
+      - "/etc/letsencrypt/live/eapteka.tutulala.ru:/etc/letsencrypt/live/eapteka.tutulala.ru:ro"
     depends_on:
       - eapteka-postgres

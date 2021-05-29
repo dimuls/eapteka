@@ -1,0 +1,1 @@
+alter table purchase_product add column price integer not null default 0;
