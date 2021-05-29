@@ -22,10 +22,10 @@ type Product struct {
 	Description string `json:"description" db:"description"`
 	Price       int32  `json:"price" db:"price"`
 	ImageID     int32  `json:"image_id" db:"image_id"`
+	SKU         int32  `json:"sku" db:"sku"`
 
-	SubstanceName *string   `json:"substance_name" db:"substance_name"`
-	Substance     Substance `json:"substances,omitempty" db:"-"`
-	Count         int32     `json:"count,omitempty" db:"count"`
+	SubstanceName *string `json:"substance_name" db:"substance_name"`
+	Count         int32   `json:"count,omitempty" db:"count"`
 }
 
 type Substance struct {

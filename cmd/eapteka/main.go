@@ -65,8 +65,8 @@ func main() {
 		go func() {
 			defer wg.Done()
 			psErr = db.Select(&ps, `
-				select substance_id, p.name as name, description, price, image_id,
-				        s.name as substance_name 
+				select substance_id, p.id as id, p.name as name, description,
+				       price, image_id, sku, s.name as substance_name 
 				from product p
 				    left join substance s on p.substance_id = s.id
 				where p.name % $1
@@ -108,7 +108,7 @@ func main() {
 
 		substanceIDstr := ctx.Query("substance_id", "")
 
-		if len(substanceIDstr) == 0 {
+		if len(substanceIDstr) != 0 {
 			substanceID, err = strconv.ParseInt(substanceIDstr, 10, 64)
 			if err != nil {
 				return fiber.NewError(http.StatusBadRequest, err.Error())
@@ -117,8 +117,8 @@ func main() {
 
 		if substanceID != 0 {
 			err = db.Select(&ps, `
-				select substance_id, p.name as name, description, price, image_id,
-						s.name as substance_name 
+				select p.id as id, p.name as name, description, price, image_id,
+						sku, s.name as substance_name
 				from product p
 					left join substance s on p.substance_id = s.id
 				where substance_id = $1
@@ -126,8 +126,8 @@ func main() {
 			`, substanceID)
 		} else {
 			err = db.Select(&ps, `
-				select substance_id, p.name as name, description, price, image_id,
-						s.name as substance_name 
+				select p.id as id, p.name as name, description, price, image_id,
+						sku, s.name as substance_name 
 				from product p
 					left join substance s on p.substance_id = s.id
 				order by id desc
@@ -142,14 +142,14 @@ func main() {
 
 	api.Get("/substances", func(ctx *fiber.Ctx) error {
 		var (
-			ps        []ent.Product
+			ss        []ent.Substance
 			productID int64
 			err       error
 		)
 
 		productIDstr := ctx.Query("product_id", "")
 
-		if len(productIDstr) == 0 {
+		if len(productIDstr) != 0 {
 			productID, err = strconv.ParseInt(productIDstr, 10, 64)
 			if err != nil {
 				return fiber.NewError(http.StatusBadRequest, err.Error())
@@ -157,8 +157,8 @@ func main() {
 		}
 
 		if productID != 0 {
-			err = db.Select(&ps, `
-				select id, name 
+			err = db.Select(&ss, `
+				select s.id as id, name 
 				from substance s
 					left join product p on p.substance_id = s.id
 				where p.id = $1
@@ -166,7 +166,7 @@ func main() {
 			`, productID)
 
 		} else {
-			err = db.Select(&ps, `
+			err = db.Select(&ss, `
 				select id, name
 				from substance s
 				order by id desc
@@ -176,7 +176,7 @@ func main() {
 			return err
 		}
 
-		return ctx.JSON(ps)
+		return ctx.JSON(ss)
 	})
 
 	api.Get("/purchases", func(ctx *fiber.Ctx) error {

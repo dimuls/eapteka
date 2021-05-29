@@ -1,0 +1,1 @@
+alter table product add column sku integer default floor(random() * (1000-1+1) + 1)::int
