@@ -5,6 +5,7 @@ import (
 	"eapteka/pics"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -12,6 +13,9 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
+
+	"github.com/gofiber/websocket/v2"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -26,6 +30,31 @@ import (
 	"eapteka/migrations"
 	"eapteka/ui"
 )
+
+func timeStrToGoTime(s string) (time.Time, error) {
+	ps := strings.SplitN(s, ": ", 3)
+
+	h, err := strconv.Atoi(ps[0])
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse hour: %w", err)
+	}
+
+	m, err := strconv.Atoi(ps[1])
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse minute: %w", err)
+	}
+
+	tz, err := time.LoadLocation(ps[2])
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse time zone: %w", err)
+	}
+
+	return time.Date(0, 0, 0, h, m, 0, 0, tz), nil
+}
+
+func goTimeToTimeStr(t time.Time) string {
+	return t.Format("04:05 MST")
+}
 
 func main() {
 	pgDSN := os.Getenv("POSTGRES_DSN")
@@ -265,6 +294,62 @@ func main() {
 		return ctx.JSON(p)
 	})
 
+	var (
+		wsClose chan struct{}
+		wsWg    sync.WaitGroup
+	)
+
+	ws.Get("/ws/notifier", websocket.New(func(c *websocket.Conn) {
+		wsWg.Add(1)
+		defer wsWg.Done()
+		defer c.Close()
+
+		var notifiers []ent.Notifier
+
+		err = db.Select(&notifiers, `
+			select n.id as id, product_id, schedule, p.name as product_name
+				from notifier as n left join product p on p.id = n.product_id
+		`)
+		if err != nil {
+			return
+		}
+
+		nsMap := map[string][]ent.Notifier{}
+
+		for _, n := range notifiers {
+			for _, s := range n.Schedule {
+				nsMap[s] = append(nsMap[s], n)
+			}
+		}
+
+		t := time.NewTicker(30 * time.Second)
+
+		for {
+			select {
+			case <-wsClose:
+				return
+			case <-t.C:
+			}
+
+			now := time.Now()
+			nowStr := goTimeToTimeStr(now)
+
+			for s, ns := range nsMap {
+				if nowStr != s {
+					continue
+				}
+
+				for _, n := range ns {
+					msg := fmt.Sprintf("Вам необходимо выпить лекарство \"%s\".", n.ProductName)
+					if err = c.WriteMessage(websocket.TextMessage, []byte(msg)); err != nil {
+						return
+					}
+				}
+			}
+		}
+
+	}))
+
 	ws.Use("/pics", filesystem.New(filesystem.Config{
 		Root: http.FS(pics.FS),
 	}))
@@ -273,7 +358,8 @@ func main() {
 		Next: func(c *fiber.Ctx) bool {
 			path := string(c.Request().URI().Path())
 			return strings.HasPrefix(path, "/api/") ||
-				strings.HasPrefix(path, "/pics/")
+				strings.HasPrefix(path, "/pics/") ||
+				strings.HasPrefix(path, "/ws/")
 		},
 		Root:         http.FS(ui.FS),
 		Index:        "index.html",
@@ -306,10 +392,13 @@ func main() {
 	signal.Notify(exit, os.Interrupt, syscall.SIGTERM)
 	<-exit
 
+	close(wsClose)
+
 	err = ws.Shutdown()
 	if err != nil {
 		logrus.WithError(err).Fatal("failed to shutdown web server")
 	}
 
+	wsWg.Wait()
 	wg.Wait()
 }

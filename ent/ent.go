@@ -36,3 +36,11 @@ type Substance struct {
 
 	Products []Product `json:"products,omitempty" db:"-"`
 }
+
+type Notifier struct {
+	ID        int64    `json:"id" db:"id"`
+	ProductID int64    `json:"product_id" db:"product_id"`
+	Schedule  []string `json:"schedule" db:"schedule"`
+
+	ProductName string `json:"product_name" db:"product_name"`
+}
