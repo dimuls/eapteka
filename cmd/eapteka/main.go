@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lib/pq"
+
 	"github.com/gofiber/websocket/v2"
 
 	"github.com/gofiber/fiber/v2"
@@ -295,6 +297,85 @@ func main() {
 	})
 
 	var (
+		nsMap = map[int64]ent.Notifier{}
+		nsMx  sync.RWMutex
+	)
+	func() {
+		var ns []ent.Notifier
+		err = db.Select(&ns, `
+			select n.id as id, product_id, schedule, p.name as product_name
+				from notifier as n left join product p on p.id = n.product_id
+		`)
+		if err != nil {
+			logrus.WithError(err).Fatal("failed to load notifiers")
+		}
+		for _, n := range ns {
+			nsMap[n.ID] = n
+		}
+	}()
+
+	api.Get("/notifers", func(ctx *fiber.Ctx) error {
+
+		nsMx.RLock()
+		defer nsMx.RUnlock()
+
+		var ns []ent.Notifier
+		for _, n := range nsMap {
+			ns = append(ns, n)
+		}
+
+		return ctx.JSON(ns)
+	})
+
+	api.Post("/notifers", func(ctx *fiber.Ctx) error {
+		var n ent.Notifier
+
+		err = json.Unmarshal(ctx.Body(), &n)
+		if err != nil {
+			return fiber.NewError(http.StatusBadRequest, err.Error())
+		}
+
+		for _, s := range n.Schedule {
+			_, err = timeStrToGoTime(s)
+			if err != nil {
+				return fiber.NewError(http.StatusBadRequest, err.Error())
+			}
+		}
+
+		err = db.QueryRowx(`
+			insert into notifier(product_id, schedule) values ($1, $2)
+			returning id
+		`, n.ProductID, pq.Array(n.Schedule)).Scan(&n.ID)
+		if err != nil {
+			return err
+		}
+
+		nsMx.Lock()
+		nsMap[n.ID] = n
+		nsMx.Unlock()
+
+		return ctx.JSON(n)
+	})
+
+	api.Delete("/notifiers/:id", func(ctx *fiber.Ctx) error {
+		nID, err := ctx.ParamsInt("id")
+		if err != nil {
+			return fiber.NewError(http.StatusBadRequest, err.Error())
+		}
+
+		_, err = db.Exec(`delete from notifier where id = $1`, nID)
+		if err != nil {
+			return err
+		}
+
+		nsMx.Lock()
+		delete(nsMap, int64(nID))
+		nsMx.Unlock()
+
+		return ctx.SendStatus(http.StatusOK)
+	})
+
+	var (
 		wsClose chan struct{}
 		wsWg    sync.WaitGroup
 	)
@@ -303,24 +384,6 @@ func main() {
 		wsWg.Add(1)
 		defer wsWg.Done()
 		defer c.Close()
-
-		var notifiers []ent.Notifier
-
-		err = db.Select(&notifiers, `
-			select n.id as id, product_id, schedule, p.name as product_name
-				from notifier as n left join product p on p.id = n.product_id
-		`)
-		if err != nil {
-			return
-		}
-
-		nsMap := map[string][]ent.Notifier{}
-
-		for _, n := range notifiers {
-			for _, s := range n.Schedule {
-				nsMap[s] = append(nsMap[s], n)
-			}
-		}
 
 		t := time.NewTicker(30 * time.Second)
 
@@ -334,20 +397,20 @@ func main() {
 			now := time.Now()
 			nowStr := goTimeToTimeStr(now)
 
-			for s, ns := range nsMap {
-				if nowStr != s {
-					continue
-				}
-
-				for _, n := range ns {
+			nsMx.RLock()
+			for _, n := range nsMap {
+				for _, s := range n.Schedule {
+					if nowStr != s {
+						continue
+					}
 					msg := fmt.Sprintf("Вам необходимо выпить лекарство \"%s\".", n.ProductName)
 					if err = c.WriteMessage(websocket.TextMessage, []byte(msg)); err != nil {
 						return
 					}
 				}
 			}
+			nsMx.RUnlock()
 		}
-
 	}))
 
 	ws.Use("/pics", filesystem.New(filesystem.Config{
