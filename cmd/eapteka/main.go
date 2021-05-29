@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -47,9 +48,9 @@ func main() {
 	api := ws.Group("/api")
 
 	api.Get("/query", func(ctx *fiber.Ctx) error {
-		query := ctx.Query("k", "")
-		if len(query) < 3 {
-			return fiber.NewError(http.StatusBadRequest, "too short query")
+		keyword := ctx.Query("k", "")
+		if len(keyword) <= 3 {
+			return fiber.NewError(http.StatusBadRequest, "too short keyword")
 		}
 
 		var (
@@ -64,10 +65,13 @@ func main() {
 		go func() {
 			defer wg.Done()
 			psErr = db.Select(&ps, `
-				select p.*, s.name from product p
+				select substance_id, p.name as name, description, price, image_id,
+				        s.name as substance_name 
+				from product p
 				    left join substance s on p.substance_id = s.id
-				where to_tsvector(p.name) @@ to_tsquery($1)
-			`, query)
+				where p.name % $1
+				order by similarity(p.name, $1) desc
+			`, keyword)
 		}()
 
 		wg.Add(1)
@@ -75,9 +79,9 @@ func main() {
 			defer wg.Done()
 			ssErr = db.Select(&ss, `
 				select * from substance s
-				    left join product p on s.id = p.substance_id 
-				where to_tsvector(s.name) @@ to_tsquery($1)
-			`, query)
+				where s.name % $1
+				order by similarity(name, $1) desc
+			`, keyword)
 		}()
 
 		wg.Wait()
@@ -93,6 +97,86 @@ func main() {
 			"products":   ps,
 			"substances": ss,
 		})
+	})
+
+	api.Get("/products", func(ctx *fiber.Ctx) error {
+		var (
+			ps          []ent.Product
+			substanceID int64
+			err         error
+		)
+
+		substanceIDstr := ctx.Query("substance_id", "")
+
+		if len(substanceIDstr) == 0 {
+			substanceID, err = strconv.ParseInt(substanceIDstr, 10, 64)
+			if err != nil {
+				return fiber.NewError(http.StatusBadRequest, err.Error())
+			}
+		}
+
+		if substanceID != 0 {
+			err = db.Select(&ps, `
+				select substance_id, p.name as name, description, price, image_id,
+						s.name as substance_name 
+				from product p
+					left join substance s on p.substance_id = s.id
+				where substance_id = $1
+				order by id desc
+			`, substanceID)
+		} else {
+			err = db.Select(&ps, `
+				select substance_id, p.name as name, description, price, image_id,
+						s.name as substance_name 
+				from product p
+					left join substance s on p.substance_id = s.id
+				order by id desc
+			`)
+		}
+		if err != nil {
+			return err
+		}
+
+		return ctx.JSON(ps)
+	})
+
+	api.Get("/substances", func(ctx *fiber.Ctx) error {
+		var (
+			ps        []ent.Product
+			productID int64
+			err       error
+		)
+
+		productIDstr := ctx.Query("product_id", "")
+
+		if len(productIDstr) == 0 {
+			productID, err = strconv.ParseInt(productIDstr, 10, 64)
+			if err != nil {
+				return fiber.NewError(http.StatusBadRequest, err.Error())
+			}
+		}
+
+		if productID != 0 {
+			err = db.Select(&ps, `
+				select id, name 
+				from substance s
+					left join product p on p.substance_id = s.id
+				where p.id = $1
+				order by id desc
+			`, productID)
+
+		} else {
+			err = db.Select(&ps, `
+				select id, name
+				from substance s
+				order by id desc
+			`)
+		}
+		if err != nil {
+			return err
+		}
+
+		return ctx.JSON(ps)
 	})
 
 	api.Get("/purchases", func(ctx *fiber.Ctx) error {
@@ -156,7 +240,7 @@ func main() {
 		return ctx.JSON(p)
 	})
 
-	ws.Get("/pics/*", filesystem.New(filesystem.Config{
+	ws.Use("/pics", filesystem.New(filesystem.Config{
 		Next: func(c *fiber.Ctx) bool {
 			path := string(c.Request().URI().Path())
 			return strings.HasPrefix(path, "/api/")
@@ -164,7 +248,7 @@ func main() {
 		Root: http.FS(pics.FS),
 	}))
 
-	ws.Get("/*", filesystem.New(filesystem.Config{
+	ws.Use(filesystem.New(filesystem.Config{
 		Next: func(c *fiber.Ctx) bool {
 			path := string(c.Request().URI().Path())
 			return strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/pics/")

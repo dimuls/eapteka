@@ -18,6 +18,11 @@ git submodule update
 docker-compose up -d --build 
 ```
 
+Для загрузки тестовых данных в базу данных введит команду
+```bash
+docker exec eapteka /usr/bin/eapteka-data-loader
+```
+
 Проект будет доступен по адресу [http://127.0.0.1:10000](http://127.0.0.1:10000).
 
 ## Схема базы данных

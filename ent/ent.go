@@ -6,7 +6,7 @@ type Purchase struct {
 	ID        int64     `json:"id" db:"id"`
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 
-	Products []Product `json:"products" db:"-"`
+	Products []Product `json:"products,omitempty" db:"-"`
 }
 
 type PurchaseProduct struct {
@@ -24,12 +24,12 @@ type Product struct {
 	ImageID     int32  `json:"image_id" db:"image_id"`
 
 	SubstanceName *string   `json:"substance_name" db:"substance_name"`
-	Substance     Substance `json:"substances" db:"-"`
+	Substance     Substance `json:"substances,omitempty" db:"-"`
 }
 
 type Substance struct {
 	ID   int64  `json:"id" db:"id"`
 	Name string `json:"name" db:"name"`
 
-	Products []Product `json:"products" db:"-"`
+	Products []Product `json:"products,omitempty" db:"-"`
 }

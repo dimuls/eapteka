@@ -1,0 +1,1 @@
+alter database eapteka set pg_trgm.similarity_threshold = 0;
