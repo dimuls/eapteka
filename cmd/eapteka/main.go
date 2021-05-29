@@ -190,6 +190,29 @@ func main() {
 		return ctx.JSON(ps)
 	})
 
+	api.Get("/purchase_products", func(ctx *fiber.Ctx) error {
+		purchaseIDstr := ctx.Query("purchase_id", "")
+		purchaseID, err := strconv.ParseInt(purchaseIDstr, 10, 64)
+		if err != nil {
+			return fiber.NewError(http.StatusBadRequest, err.Error())
+		}
+
+		var ps []ent.Product
+
+		err = db.Select(&ps, `
+			select substance_id, p.name as name, description, price, image_id,
+				        s.name as substance_name, count
+			from purchase_product
+			    left join product p on purchase_product.product_id = p.id
+			    left join substance s on s.id = p.substance_id
+			where purchase_id = $1`, purchaseID)
+		if err != nil {
+			return err
+		}
+
+		return ctx.JSON(ps)
+	})
+
 	api.Post("/purchases", func(ctx *fiber.Ctx) (err error) {
 		var pps []ent.PurchaseProduct
 

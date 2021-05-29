@@ -25,6 +25,7 @@ type Product struct {
 
 	SubstanceName *string   `json:"substance_name" db:"substance_name"`
 	Substance     Substance `json:"substances,omitempty" db:"-"`
+	Count         int32     `json:"count,omitempty" db:"count"`
 }
 
 type Substance struct {
