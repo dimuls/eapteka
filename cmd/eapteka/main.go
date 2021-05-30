@@ -197,6 +197,28 @@ func main() {
 		})
 	})
 
+	api.Get("/products/:product_id", func(ctx *fiber.Ctx) error {
+		pID, err := ctx.ParamsInt("product_id")
+		if err != nil {
+			return fiber.NewError(http.StatusBadRequest, err.Error())
+		}
+
+		var p ent.Product
+
+		err = db.QueryRowx(`
+			select substance_id, p.id as id, p.name as name, description,
+				   price, image_id, sku, s.name as substance_name 
+			from product p
+				left join substance s on p.substance_id = s.id
+			where p.id = $1
+		`, pID).StructScan(&p)
+		if err != nil {
+			return err
+		}
+
+		return ctx.JSON(p)
+	})
+
 	api.Get("/products", func(ctx *fiber.Ctx) error {
 		var (
 			ps          []ent.Product
@@ -216,7 +238,7 @@ func main() {
 		if substanceID != 0 {
 			err = db.Select(&ps, `
 				select p.id as id, p.name as name, description, price, image_id,
-						sku, s.name as substance_name
+						sku, s.name as substance_name, s.id as substance_id
 				from product p
 					left join substance s on p.substance_id = s.id
 				where substance_id = $1
@@ -225,7 +247,7 @@ func main() {
 		} else {
 			err = db.Select(&ps, `
 				select p.id as id, p.name as name, description, price, image_id,
-						sku, s.name as substance_name 
+						sku, s.name as substance_name, s.id as substance_id
 				from product p
 					left join substance s on p.substance_id = s.id
 				order by id desc
@@ -298,8 +320,8 @@ func main() {
 		var ps []ent.Product
 
 		err = db.Select(&ps, `
-			select substance_id, p.name as name, description, price, image_id,
-				        s.name as substance_name, count, pp.price as purchase_price 
+			select p.id as id, substance_id, p.name as name, description, image_id,
+					s.name as substance_name, count, pp.price as purchase_price 
 			from purchase_product pp
 			    left join product p on pp.product_id = p.id
 			    left join substance s on s.id = p.substance_id
@@ -342,7 +364,7 @@ func main() {
 		for _, pp := range pps {
 			_, err = tx.Exec(`
 				insert into purchase_product(purchase_id, product_id, count, price)
- 				values ($1, $2, $3)
+ 				values ($1, $2, $3, $4)
 			`, p.ID, pp.ProductID, pp.Count, pp.Price)
 			if err != nil {
 				return err
@@ -350,10 +372,15 @@ func main() {
 			pIDs = append(pIDs, pp.ProductID)
 		}
 
+		err = tx.Commit()
+		if err != nil {
+			return err
+		}
+
 		err = db.Select(&p.Products, `
 			select * from product where id = ANY($1::BIGINT[])
 			order by id asc
-		`, pIDs)
+		`, pq.Array(pIDs))
 		if err != nil {
 			return err
 		}
@@ -534,7 +561,7 @@ func main() {
 
 			err = db.QueryRowx(`
 				select p.id as id, p.name as name, description, price, image_id,
-						sku, s.name as substance_name
+						sku, s.name as substance_name, s.id as substance_id
 				from product p
 					left join substance s on p.substance_id = s.id
 				where p.id = $1
