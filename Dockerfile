@@ -11,6 +11,8 @@ RUN NODE_ENV=production npm run build
 
 FROM golang:alpine AS backend-builder
 
+ENV CGO_ENABLED=0
+
 WORKDIR /go/src/github.com/dimuls/eapteka
 
 COPY . .

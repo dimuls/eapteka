@@ -2,10 +2,11 @@ package main
 
 import (
 	"context"
-	"eapteka/pics"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,27 +15,30 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	"github.com/lib/pq"
-
-	"github.com/gofiber/websocket/v2"
+	_ "time/tzdata"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/gofiber/websocket/v2"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	_ "github.com/lib/pq"
 	"github.com/sirupsen/logrus"
 
 	"eapteka/ent"
 	"eapteka/filesystem"
 	"eapteka/migrations"
+	"eapteka/pics"
 	"eapteka/ui"
 )
 
 func timeStrToGoTime(s string) (time.Time, error) {
-	ps := strings.SplitN(s, ": ", 3)
+	ps := strings.Split(s, ":")
+	if len(ps) != 3 {
+		return time.Time{}, fmt.Errorf("invalid time format")
+	}
 
 	h, err := strconv.Atoi(ps[0])
 	if err != nil {
@@ -55,7 +59,68 @@ func timeStrToGoTime(s string) (time.Time, error) {
 }
 
 func goTimeToTimeStr(t time.Time) string {
-	return t.Format("04:05 MST")
+	return t.Format("15:04:") + t.Location().String()
+}
+
+func processRecommends(db *sqlx.DB) []int64 {
+
+	rows, err := db.Query(`
+		select pp.product_id as product_id, p.created_at as created_at
+		from purchase as p
+		left join purchase_product as pp on p.id = pp.purchase_id
+		where product_id is not null and created_at >= $1
+		order by created_at desc ;
+	`, time.Now().AddDate(0, -6, 0))
+	if err != nil {
+		logrus.WithError(err).Error("failed to get products")
+		return nil
+	}
+
+	purchases := map[int64][]time.Time{}
+
+	for rows.Next() {
+		var (
+			createdAt time.Time
+			productID int64
+		)
+
+		err := rows.Scan(&createdAt, &productID)
+		if err != nil {
+			logrus.WithError(err).Error("failed to get product")
+			continue
+		}
+
+		purchases[productID] = append(purchases[productID], createdAt)
+	}
+
+	var recommends []int64
+
+	const (
+		minInterval = 25 * 24 * time.Hour
+		maxInterval = 35 * 24 * time.Hour
+
+		maxSubInterval = 1 * 24 * time.Hour
+	)
+
+	for pID, ts := range purchases {
+		if len(ts) < 2 {
+			continue
+		}
+		var count int
+		for i := 1; i < len(ts); i++ {
+			interval := ts[i].Sub(ts[i-1])
+			if (interval < minInterval || interval > maxInterval) &&
+				maxSubInterval > interval {
+				break
+			}
+			count++
+		}
+		if count > 2 {
+			recommends = append(recommends, pID)
+		}
+	}
+
+	return recommends
 }
 
 func main() {
@@ -90,7 +155,7 @@ func main() {
 			wg    sync.WaitGroup
 			ps    []ent.Product
 			psErr error
-			ss    []ent.Product
+			ss    []ent.Substance
 			ssErr error
 		)
 
@@ -314,7 +379,7 @@ func main() {
 		}
 	}()
 
-	api.Get("/notifers", func(ctx *fiber.Ctx) error {
+	api.Get("/notifiers", func(ctx *fiber.Ctx) error {
 
 		nsMx.RLock()
 		defer nsMx.RUnlock()
@@ -327,7 +392,7 @@ func main() {
 		return ctx.JSON(ns)
 	})
 
-	api.Post("/notifers", func(ctx *fiber.Ctx) error {
+	api.Post("/notifiers", func(ctx *fiber.Ctx) error {
 		var n ent.Notifier
 
 		err = json.Unmarshal(ctx.Body(), &n)
@@ -335,11 +400,19 @@ func main() {
 			return fiber.NewError(http.StatusBadRequest, err.Error())
 		}
 
-		for _, s := range n.Schedule {
-			_, err = timeStrToGoTime(s)
+		err = db.QueryRowx(`
+			select name from product where id = $1
+		`, n.ProductID).Scan(&n.ProductName)
+		if err != nil {
+			return err
+		}
+
+		for i, s := range n.Schedule {
+			t, err := timeStrToGoTime(s)
 			if err != nil {
 				return fiber.NewError(http.StatusBadRequest, err.Error())
 			}
+			n.Schedule[i] = goTimeToTimeStr(t)
 		}
 
 		err = db.QueryRowx(`
@@ -375,21 +448,43 @@ func main() {
 		return ctx.SendStatus(http.StatusOK)
 	})
 
+	api.Get("/experts/:substance_id", func(ctx *fiber.Ctx) error {
+		sID, err := ctx.ParamsInt("substance_id")
+		if err != nil {
+			return fiber.NewError(http.StatusBadRequest, err.Error())
+		}
+
+		var e ent.Expert
+
+		err = db.QueryRowx(`
+			select * from expert where substance_id = $1
+		`, sID).StructScan(&e)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ctx.SendStatus(http.StatusNotFound)
+			}
+			return err
+		}
+
+		return ctx.JSON(e)
+	})
+
 	var (
-		wsClose chan struct{}
-		wsWg    sync.WaitGroup
+		wsNotifierClose = make(chan struct{})
+		wsNotifierWg    sync.WaitGroup
 	)
 
 	ws.Get("/ws/notifier", websocket.New(func(c *websocket.Conn) {
-		wsWg.Add(1)
-		defer wsWg.Done()
+		wsNotifierWg.Add(1)
+		defer wsNotifierWg.Done()
 		defer c.Close()
 
 		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
 
 		for {
 			select {
-			case <-wsClose:
+			case <-wsNotifierClose:
 				return
 			case <-t.C:
 			}
@@ -410,6 +505,66 @@ func main() {
 				}
 			}
 			nsMx.RUnlock()
+		}
+	}))
+
+	var (
+		wsRecommendsClose = make(chan struct{})
+		wsRecommends      = make(chan ent.Product)
+		wsRecommendsWg    sync.WaitGroup
+	)
+
+	wsRecommendsWg.Add(1)
+	go func() {
+		defer wsRecommendsWg.Done()
+
+		t := time.NewTicker(1 * time.Hour)
+		var p ent.Product
+
+		for {
+			select {
+			case <-wsRecommendsClose:
+				return
+			case <-t.C:
+			}
+
+			recommends := processRecommends(db)
+
+			pID := recommends[rand.Intn(len(recommends))]
+
+			err = db.QueryRowx(`
+				select p.id as id, p.name as name, description, price, image_id,
+						sku, s.name as substance_name
+				from product p
+					left join substance s on p.substance_id = s.id
+				where p.id = $1
+			`, pID).StructScan(&p)
+			if err != nil {
+				logrus.WithError(err).Error("failed to get product")
+				continue
+			}
+
+			wsRecommends <- p
+		}
+	}()
+
+	ws.Get("/ws/recommends", websocket.New(func(c *websocket.Conn) {
+		wsRecommendsWg.Add(1)
+		defer wsRecommendsWg.Done()
+		defer c.Close()
+
+		var p ent.Product
+
+		for {
+			select {
+			case <-wsRecommendsClose:
+				return
+			case p = <-wsRecommends:
+			}
+
+			if err = c.WriteJSON(p); err != nil {
+				return
+			}
 		}
 	}))
 
@@ -455,13 +610,15 @@ func main() {
 	signal.Notify(exit, os.Interrupt, syscall.SIGTERM)
 	<-exit
 
-	close(wsClose)
+	close(wsNotifierClose)
+	close(wsRecommendsClose)
 
 	err = ws.Shutdown()
 	if err != nil {
 		logrus.WithError(err).Fatal("failed to shutdown web server")
 	}
 
-	wsWg.Wait()
+	wsNotifierWg.Wait()
+	wsRecommendsWg.Wait()
 	wg.Wait()
 }

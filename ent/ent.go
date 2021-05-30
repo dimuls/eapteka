@@ -1,6 +1,10 @@
 package ent
 
-import "time"
+import (
+	"time"
+
+	"github.com/lib/pq"
+)
 
 type Purchase struct {
 	ID        int64     `json:"id" db:"id"`
@@ -38,9 +42,17 @@ type Substance struct {
 }
 
 type Notifier struct {
-	ID        int64    `json:"id" db:"id"`
-	ProductID int64    `json:"product_id" db:"product_id"`
-	Schedule  []string `json:"schedule" db:"schedule"`
+	ID        int64          `json:"id" db:"id"`
+	ProductID int64          `json:"product_id" db:"product_id"`
+	Schedule  pq.StringArray `json:"schedule" db:"schedule"`
 
 	ProductName string `json:"product_name" db:"product_name"`
+}
+
+type Expert struct {
+	ID          int64  `json:"id" db:"id"`
+	SubstanceID int64  `json:"substance_id" db:"substance_id"`
+	ExpertName  string `json:"expert_name" db:"expert_name"`
+	Title       string `json:"title" db:"title"`
+	Text        string `json:"text" db:"text"`
 }

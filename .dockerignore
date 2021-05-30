@@ -1,6 +1,8 @@
 Dockerfile
 .dockerignore
 .idea
+docker-compose.local.yml
+docker-compose.yml
 
 ui/node_modules
 ui/dist
